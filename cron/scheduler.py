@@ -1013,7 +1013,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             # .cursorrules from that directory; otherwise preserve the old
             # behaviour (don't inject SOUL.md/AGENTS.md from the scheduler cwd).
             skip_context_files=not bool(_job_workdir),
-            skip_memory=True,  # Cron system prompts would corrupt user representations
+            skip_memory=not job.get("enable_memory", False),  # Allow trusted jobs (Memory Keeper) to write memory
             platform="cron",
             session_id=_cron_session_id,
             session_db=_session_db,
@@ -1151,6 +1151,13 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         return False, output, "", error_msg
 
     finally:
+        # Clean up memory provider (aiohttp sessions, etc.) to avoid
+        # "Unclosed client session" warnings from hindsight-client.
+        if 'agent' in locals() and hasattr(agent, 'shutdown_memory_provider'):
+            try:
+                agent.shutdown_memory_provider()
+            except Exception as e:
+                logger.debug("Job '%s': failed to shutdown memory provider: %s", job_id, e)
         # Restore TERMINAL_CWD to whatever it was before this job ran.  We
         # only ever mutate it when the job has a workdir; see the setup block
         # at the top of run_job for the serialization guarantee.
