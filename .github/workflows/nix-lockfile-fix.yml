@@ -1,6 +1,13 @@
 name: Nix Lockfile Fix
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'ui-tui/package-lock.json'
+      - 'ui-tui/package.json'
+      - 'web/package-lock.json'
+      - 'web/package.json'
   workflow_dispatch:
     inputs:
       pr_number:
@@ -19,9 +26,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── Auto-fix on main ───────────────────────────────────────────────
+  # Fires when a push to main touches package.json or package-lock.json
+  # in ui-tui/ or web/. Runs fix-lockfiles --apply and pushes the hash
+  # update commit directly to main so Nix builds never stay broken.
+  #
+  # The fix commit only touches nix/*.nix files, which are NOT in the
+  # paths filter above, so this cannot re-trigger itself.
+  auto-fix-main:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ./.github/actions/nix-setup
+
+      - name: Apply lockfile hashes
+        id: apply
+        run: nix run .#fix-lockfiles -- --apply
+
+      - name: Commit & push
+        if: steps.apply.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add nix/tui.nix nix/web.nix
+          git commit -m "fix(nix): auto-refresh npm lockfile hashes"
+          git push
+
+  # ── PR fix (manual / checkbox) ─────────────────────────────────────
+  # Existing behavior: run on manual dispatch OR when a task-list
+  # checkbox in the sticky lockfile-check comment flips from [ ] to [x].
   fix:
-    # Run on manual dispatch OR when a task-list checkbox in the sticky
-    # lockfile-check comment flips from `[ ]` to `[x]`.
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment'
